@@ -3,44 +3,50 @@
 #include "llvm/Pass.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
-#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/PassManager.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Scalar/InstSimplifyPass.h"
+#include "llvm/CodeGen/TargetPassConfig.h"
 
 #include "loguru.hpp"
-
 using namespace llvm;
 
-void Optimizer::optimize(Module* theModule) {
+void Optimizer::optimize(Module* theModule, bool extraOpts) {
   LOG_S(1) << "Optimizing program " << theModule->getName().str();
 
-  // Create a pass manager to simplify generated module
-  auto TheFPM = std::make_unique<legacy::FunctionPassManager>(theModule);
+    LoopAnalysisManager LAM;
+    FunctionAnalysisManager FAM;
+    CGSCCAnalysisManager CGAM;
+    ModuleAnalysisManager MAM;
 
-  // Promote allocas to registers.
-  TheFPM->add(createPromoteMemoryToRegisterPass());
+    // Create the new pass manager builder.
+    // Take a look at the PassBuilder constructor parameters for more
+    // customization, e.g. specifying a TargetMachine or various debugging
+    // options.
+    PassBuilder PB;
 
-  // Do simple "peephole" optimizations
-  TheFPM->add(createInstructionCombiningPass());
+    // Register all the basic analyses with the managers.
+    PB.registerModuleAnalyses(MAM);
+    PB.registerCGSCCAnalyses(CGAM);
+    PB.registerFunctionAnalyses(FAM);
+    PB.registerLoopAnalyses(LAM);
+    PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
-  // Reassociate expressions.
-  TheFPM->add(createReassociatePass());
 
-  // Eliminate Common SubExpressions.
-  TheFPM->add(createGVNPass());
+    ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(OptimizationLevel::O2);
+    FunctionPassManager FPM;
+    //FPM.addPass(InstSimplifyPass());
+    FPM.addPass(createPromoteMemoryToRegisterPass());
 
-  // Simplify the control flow graph (deleting unreachable blocks, etc).
-  TheFPM->add(createCFGSimplificationPass());
 
-  // initialize and run simplification pass on each function
-  TheFPM->doInitialization();
-  for (auto &fun : theModule->getFunctionList()) {
-    LOG_S(1) << "Optimizing function " << fun.getName().str();
+    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
+    // Optimize the IR!
 
-    TheFPM->run(fun);
-  }
+    MPM.run(*theModule, MAM);
 }
+
