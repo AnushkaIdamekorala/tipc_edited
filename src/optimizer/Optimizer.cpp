@@ -41,7 +41,7 @@ void Optimizer::optimize(Module* theModule, bool extraOpts) {
     ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(OptimizationLevel::O2);
     FunctionPassManager FPM;
     //FPM.addPass(InstSimplifyPass());
-    FPM.addPass(createPromoteMemoryToRegisterPass());
+    FPM.addPass(llvm::createDeadStoreEliminationPass());
 
 
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
